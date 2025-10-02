@@ -167,5 +167,6 @@ class HandMirrorController:
         print("✅ Exit cleanly")
 
 if __name__ == "__main__":
-    controller = HandMirrorController('/dev/cu.usbmodem101')
+    # on mac use this controller = HandMirrorController('/dev/cu.usbmodem101')
+    controller = HandMirrorController('/dev/ttyACM0') # on linux use this
     controller.run()
