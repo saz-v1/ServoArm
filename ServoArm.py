@@ -7,7 +7,7 @@ import math
 
 class HandMirrorController:
     def __init__(self, arduino_port='/dev/cu.usbmodem101', baud_rate=9600):
-        # Initialize MediaPipe
+        # --- MediaPipe Hands ---
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
@@ -17,42 +17,41 @@ class HandMirrorController:
         )
         self.mp_draw = mp.solutions.drawing_utils
 
-        # Initialize Arduino
+        # --- MediaPipe Pose (for arm joints only) ---
+        self.mp_pose = mp.solutions.pose
+        self.pose = self.mp_pose.Pose(
+            static_image_mode=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
+        # --- Arduino setup ---
         try:
             self.arduino = serial.Serial(arduino_port, baud_rate, timeout=1)
-            time.sleep(2)  # wait for Arduino reset
+            time.sleep(2)
             print(f"✅ Connected to Arduino on {arduino_port}")
         except Exception as e:
             print(f"❌ Could not connect to Arduino: {e}")
             self.arduino = None
 
-        # Camera
+        # --- Camera ---
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        # Control rate
+        # --- Control rate ---
         self.last_command_time = 0
-        self.command_interval = 0.5  # seconds between Arduino updates
+        self.command_interval = 0.5
 
-        # Previous servo values
+        # --- Previous servo values ---
         self.prev_claw = 90
-        self.prev_height = 45
+        self.prev_height = 0
         self.prev_extension = 45
         self.prev_base = 90
 
-        print("🤚 Hand Mirror Controller Ready!")
-        print("Controls:")
-        print("🤜 FIST → Claw closes")
-        print("🖐 OPEN → Claw opens")
-        print("⬆️ Forearm up → Arm up")
-        print("⬇️ Forearm down → Arm down")
-        print("↔️ Tilt forward/back → Extension")
-        print("🔄 Rotate wrist → Base rotate")
-        print("Press 'q' to quit, 'r' to reset servos")
+        print("🤚 Hand Mirror Controller Ready! Press 'q' to quit, 'r' to reset servos.")
 
     def send_command(self, command):
-        """Send string command to Arduino"""
         if self.arduino:
             try:
                 self.arduino.write((command + '\n').encode())
@@ -61,7 +60,7 @@ class HandMirrorController:
                 print(f"Arduino error: {e}")
         return False
 
-    # --- Hand landmark calculations ---
+    # --- Utility functions ---
     def calculate_distance(self, p1, p2):
         return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
 
@@ -82,36 +81,53 @@ class HandMirrorController:
         wrist, index_mcp, pinky_mcp = landmarks[0], landmarks[5], landmarks[17]
         vec = np.array([index_mcp.x - pinky_mcp.x, index_mcp.y - pinky_mcp.y])
         angle = math.atan2(vec[1], vec[0])
-        deg = np.degrees(angle)
-        if abs(deg) < 15:
-            return 90
-        elif deg > 15:
-            return int(np.clip(90 + (deg - 15) / 75 * 20, 90, 110))
-        else:
-            return int(np.clip(90 + (deg + 15) / 75 * 20, 70, 90))
+        deg = math.degrees(angle)
+        # Map to Arduino base servo range 70-110
+        base_angle = int(np.clip(90 + deg / 90 * 20, 70, 110))
+        return base_angle
 
-    def calculate_forearm_pitch(self, landmarks):
-        wrist, middle_mcp = landmarks[0], landmarks[9]
-        vec = np.array([middle_mcp.x - wrist.x, middle_mcp.y - wrist.y])
-        up = np.array([0, -1])
-        angle = math.degrees(math.atan2(np.cross(vec, up), np.dot(vec, up)))
-        return int(np.clip(-angle + 90, 0, 90))
+    def calculate_forearm_pitch(self, pose_landmarks):
+        shoulder = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
+        elbow = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_ELBOW]
+        wrist = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_WRIST]
 
-    def calculate_hand_extension(self, landmarks):
-        wrist, middle_tip = landmarks[0], landmarks[12]
-        forward_component = -(middle_tip.y - wrist.y)
-        extension_ratio = forward_component / (abs(middle_tip.y - wrist.y) + 1e-6)
-        return int(np.clip(extension_ratio * 45 + 45, 0, 90))
+        forearm_vec = np.array([wrist.x - elbow.x, wrist.y - elbow.y])
+        upper_arm_vec = np.array([elbow.x - shoulder.x, elbow.y - shoulder.y])
 
-    # --- Mirror hand to servo commands ---
-    def mirror_hand_to_servos(self, landmarks):
-        claw = self.calculate_fist_closure(landmarks)
-        height = self.calculate_forearm_pitch(landmarks)
-        extension = self.calculate_hand_extension(landmarks)
-        base = self.calculate_wrist_rotation(landmarks)
+        dot = np.dot(forearm_vec, upper_arm_vec)
+        mag_forearm = np.linalg.norm(forearm_vec)
+        mag_upper = np.linalg.norm(upper_arm_vec)
+        angle_rad = math.acos(np.clip(dot / (mag_forearm * mag_upper + 1e-6), -1.0, 1.0))
+        angle_deg = math.degrees(angle_rad)
+        servo_angle = int(np.clip(-angle_deg + 90, 0, 90))
+        return servo_angle
 
-        current_time = time.time()
-        if current_time - self.last_command_time >= self.command_interval:
+    def calculate_hand_extension(self, pose_landmarks, hand_landmarks):
+        shoulder = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
+        wrist = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_WRIST]
+
+        # 2D distance in image space (x,y) between shoulder and wrist
+        dx = wrist.x - shoulder.x
+        dy = wrist.y - shoulder.y
+        distance = math.sqrt(dx**2 + dy**2)
+
+        # Calibrated min/max distances for your arm movement
+        min_distance = 0.1   # arm retracted
+        max_distance = 0.4   # arm extended
+
+        extension_ratio = (distance - min_distance) / (max_distance - min_distance)
+        extension_angle = int(np.clip(extension_ratio * 90, 0, 90))
+        return extension_angle
+
+    # --- Mirror to Arduino ---
+    def mirror_hand_to_servos(self, pose_landmarks, hand_landmarks):
+        claw = self.calculate_fist_closure(hand_landmarks)
+        height = self.calculate_forearm_pitch(pose_landmarks)
+        extension = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
+        base = self.calculate_wrist_rotation(hand_landmarks)
+
+        now = time.time()
+        if now - self.last_command_time >= self.command_interval:
             if (abs(claw - self.prev_claw) > 5 or
                 abs(height - self.prev_height) > 5 or
                 abs(extension - self.prev_extension) > 5 or
@@ -129,7 +145,7 @@ class HandMirrorController:
 
                 self.prev_claw, self.prev_height = claw, height
                 self.prev_extension, self.prev_base = extension, base
-            self.last_command_time = current_time
+            self.last_command_time = now
 
     # --- Main loop ---
     def run(self):
@@ -139,23 +155,30 @@ class HandMirrorController:
                 break
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb)
 
-            if results.multi_hand_landmarks:
-                landmarks = results.multi_hand_landmarks[0].landmark
-                self.mirror_hand_to_servos(landmarks)
-                self.mp_draw.draw_landmarks(frame, results.multi_hand_landmarks[0], self.mp_hands.HAND_CONNECTIONS)
+            pose_results = self.pose.process(rgb)
+            hands_results = self.hands.process(rgb)
 
-            cv2.imshow("Hand Control", frame)
+            if pose_results.pose_landmarks and hands_results.multi_hand_landmarks:
+                pose_landmarks = pose_results.pose_landmarks.landmark
+                hand_landmarks = hands_results.multi_hand_landmarks[0].landmark
+                self.mirror_hand_to_servos(pose_landmarks, hand_landmarks)
+
+                # Draw only hand and arm landmarks
+                self.mp_draw.draw_landmarks(frame, hands_results.multi_hand_landmarks[0], self.mp_hands.HAND_CONNECTIONS)
+                mp.solutions.drawing_utils.draw_landmarks(frame, pose_results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
+
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
             elif key == ord('r'):
                 self.send_command("C90")
-                self.send_command("H45")
+                self.send_command("H0")
                 self.send_command("E45")
                 self.send_command("B90")
                 print("🔄 Resetting to default")
+
+            cv2.imshow("Hand Control", frame)
 
         self.cleanup()
 
@@ -167,6 +190,6 @@ class HandMirrorController:
         print("✅ Exit cleanly")
 
 if __name__ == "__main__":
-    # on mac use this controller = HandMirrorController('/dev/cu.usbmodem101')
-    controller = HandMirrorController('/dev/ttyACM0') # on linux use this
+    controller = HandMirrorController('/dev/ttyACM0')  # Linux
+    # controller = HandMirrorController('/dev/cu.usbmodem101')  # macOS
     controller.run()
