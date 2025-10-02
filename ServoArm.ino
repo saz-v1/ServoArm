@@ -22,36 +22,29 @@ void setup() {
 
 void loop() {
   if (Serial.available() > 0) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
+    String line = Serial.readStringUntil('\n');
+    line.trim();
 
-    if (command.length() > 1) {
-      char id = command.charAt(0);
-      int angle = command.substring(1).toInt();
+    int cIndex = line.indexOf('C');
+    int hIndex = line.indexOf('H');
+    int eIndex = line.indexOf('E');
+    int bIndex = line.indexOf('B');
 
-      if (id == 'C') { // Claw
-        angle = constrain(angle, 0, 90);   // 0 = closed, 90 = open
-        clawServo.write(angle);
-        Serial.println("Claw -> " + String(angle));
-      } 
-      else if (id == 'H') { // Vertical angle
-        angle = constrain(angle, 0, 90);
-        secondArmServo.write(angle);
-        Serial.println("Height -> " + String(angle));
-      } 
-      else if (id == 'E') { // Extension
-        angle = constrain(angle, 0, 90);
-        firstArmServo.write(angle);
-        Serial.println("Extension -> " + String(angle));
-      } 
-      else if (id == 'B') { // Base rotation
-        angle = constrain(angle, 70, 110);
-        baseServo.write(angle);
-        Serial.println("Base -> " + String(angle));
-      } 
-      else {
-        Serial.println("Unknown command: " + command);
-      }
+    if (cIndex != -1 && hIndex != -1 && eIndex != -1 && bIndex != -1) {
+      int clawAngle = line.substring(cIndex+1, hIndex).toInt();
+      int heightAngle = line.substring(hIndex+1, eIndex).toInt();
+      int extensionAngle = line.substring(eIndex+1, bIndex).toInt();
+      int baseAngle = line.substring(bIndex+1).toInt();
+
+      clawAngle = constrain(clawAngle, 0, 90);
+      heightAngle = constrain(heightAngle, 0, 90);
+      extensionAngle = constrain(extensionAngle, 0, 90);
+      baseAngle = constrain(baseAngle, 70, 110);
+
+      clawServo.write(clawAngle);
+      secondArmServo.write(heightAngle);
+      firstArmServo.write(extensionAngle);
+      baseServo.write(baseAngle);
     }
   }
 }

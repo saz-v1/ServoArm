@@ -38,12 +38,12 @@ class HandMirrorController:
 
         # --- Camera setup ---
         self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)  # reduced resolution
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)  # reduced resolution for speed
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
         # --- Control rate ---
         self.last_command_time = 0
-        self.command_interval = 0.5
+        self.command_interval = 0.2  # slower updates (200ms)
 
         # --- Previous servo values ---
         self.prev_claw = 90
@@ -123,24 +123,27 @@ class HandMirrorController:
         claw = self.calculate_fist_closure(hand_landmarks)
         height = self.calculate_forearm_pitch(pose_landmarks)
         extension = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
-        base = self.calculate_wrist_rotation(hand_landmarks)
+        base_target = self.calculate_wrist_rotation(hand_landmarks)
+
+        # Gradually move base to slow rotation
+        base_diff = base_target - self.prev_base
+        max_base_step = 2  # max degrees per update
+        if abs(base_diff) > max_base_step:
+            base = self.prev_base + np.sign(base_diff) * max_base_step
+        else:
+            base = base_target
 
         now = time.time()
         if now - self.last_command_time >= self.command_interval:
-            if (abs(claw - self.prev_claw) > 5 or
-                abs(height - self.prev_height) > 5 or
-                abs(extension - self.prev_extension) > 5 or
-                abs(base - self.prev_base) > 5):
+            if (abs(claw - self.prev_claw) > 2 or
+                abs(height - self.prev_height) > 2 or
+                abs(extension - self.prev_extension) > 2 or
+                abs(base - self.prev_base) > 0):
 
-                self.send_command(f"C{claw}")
-                time.sleep(0.05)
-                self.send_command(f"H{height}")
-                time.sleep(0.05)
-                self.send_command(f"E{extension}")
-                time.sleep(0.05)
-                self.send_command(f"B{base}")
-
-                print(f"Sent -> Claw:{claw} Height:{height} Ext:{extension} Base:{base}")
+                # Send all in one line
+                command = f"C{claw} H{height} E{extension} B{base}"
+                self.send_command(command)
+                print(f"Sent -> {command}")
 
                 self.prev_claw, self.prev_height = claw, height
                 self.prev_extension, self.prev_base = extension, base
@@ -163,7 +166,6 @@ class HandMirrorController:
                 hand_landmarks = hands_results.multi_hand_landmarks[0].landmark
                 self.mirror_hand_to_servos(pose_landmarks, hand_landmarks)
 
-                # Only draw frame if show_frame=True
                 if self.show_frame:
                     self.mp_draw.draw_landmarks(frame, hands_results.multi_hand_landmarks[0], self.mp_hands.HAND_CONNECTIONS)
                     mp.solutions.drawing_utils.draw_landmarks(frame, pose_results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
@@ -174,13 +176,9 @@ class HandMirrorController:
                 if key == ord('q'):
                     break
                 elif key == ord('r'):
-                    self.send_command("C90")
-                    self.send_command("H0")
-                    self.send_command("E45")
-                    self.send_command("B90")
+                    self.send_command("C90 H0 E45 B90")
                     print("🔄 Resetting to default")
             else:
-                # Check for 'q' without showing frame
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
@@ -193,6 +191,8 @@ class HandMirrorController:
         cv2.destroyAllWindows()
         print("✅ Exit cleanly")
 
+
 if __name__ == "__main__":
-    controller = HandMirrorController('/dev/ttyACM0', show_frame=True)  # Set show_frame=False for max speed
+    # Set show_frame=True to see the video, False for max speed
+    controller = HandMirrorController('/dev/ttyACM0', show_frame=True)
     controller.run()
