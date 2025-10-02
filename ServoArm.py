@@ -6,23 +6,25 @@ import numpy as np
 import math
 
 class HandMirrorController:
-    def __init__(self, arduino_port='/dev/cu.usbmodem101', baud_rate=9600):
+    def __init__(self, arduino_port='/dev/cu.usbmodem101', baud_rate=9600, show_frame=False):
+        self.show_frame = show_frame
+
         # --- MediaPipe Hands ---
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
             min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
+            min_tracking_confidence=0.7
         )
         self.mp_draw = mp.solutions.drawing_utils
 
-        # --- MediaPipe Pose (for arm joints only) ---
+        # --- MediaPipe Pose ---
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=False,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
         )
 
         # --- Arduino setup ---
@@ -34,10 +36,10 @@ class HandMirrorController:
             print(f"❌ Could not connect to Arduino: {e}")
             self.arduino = None
 
-        # --- Camera ---
+        # --- Camera setup ---
         self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)  # reduced resolution
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
         # --- Control rate ---
         self.last_command_time = 0
@@ -82,7 +84,6 @@ class HandMirrorController:
         vec = np.array([index_mcp.x - pinky_mcp.x, index_mcp.y - pinky_mcp.y])
         angle = math.atan2(vec[1], vec[0])
         deg = math.degrees(angle)
-        # Map to Arduino base servo range 70-110
         base_angle = int(np.clip(90 + deg / 90 * 20, 70, 110))
         return base_angle
 
@@ -106,14 +107,12 @@ class HandMirrorController:
         shoulder = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
         wrist = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_WRIST]
 
-        # 2D distance in image space (x,y) between shoulder and wrist
         dx = wrist.x - shoulder.x
         dy = wrist.y - shoulder.y
         distance = math.sqrt(dx**2 + dy**2)
 
-        # Calibrated min/max distances for your arm movement
-        min_distance = 0.1   # arm retracted
-        max_distance = 0.4   # arm extended
+        min_distance = 0.1
+        max_distance = 0.4
 
         extension_ratio = (distance - min_distance) / (max_distance - min_distance)
         extension_angle = int(np.clip(extension_ratio * 90, 0, 90))
@@ -164,21 +163,26 @@ class HandMirrorController:
                 hand_landmarks = hands_results.multi_hand_landmarks[0].landmark
                 self.mirror_hand_to_servos(pose_landmarks, hand_landmarks)
 
-                # Draw only hand and arm landmarks
-                self.mp_draw.draw_landmarks(frame, hands_results.multi_hand_landmarks[0], self.mp_hands.HAND_CONNECTIONS)
-                mp.solutions.drawing_utils.draw_landmarks(frame, pose_results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
+                # Only draw frame if show_frame=True
+                if self.show_frame:
+                    self.mp_draw.draw_landmarks(frame, hands_results.multi_hand_landmarks[0], self.mp_hands.HAND_CONNECTIONS)
+                    mp.solutions.drawing_utils.draw_landmarks(frame, pose_results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
+                    cv2.imshow("Hand Control", frame)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == ord('r'):
-                self.send_command("C90")
-                self.send_command("H0")
-                self.send_command("E45")
-                self.send_command("B90")
-                print("🔄 Resetting to default")
-
-            cv2.imshow("Hand Control", frame)
+            if self.show_frame:
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    break
+                elif key == ord('r'):
+                    self.send_command("C90")
+                    self.send_command("H0")
+                    self.send_command("E45")
+                    self.send_command("B90")
+                    print("🔄 Resetting to default")
+            else:
+                # Check for 'q' without showing frame
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
         self.cleanup()
 
@@ -190,6 +194,5 @@ class HandMirrorController:
         print("✅ Exit cleanly")
 
 if __name__ == "__main__":
-    controller = HandMirrorController('/dev/ttyACM0')  # Linux
-    # controller = HandMirrorController('/dev/cu.usbmodem101')  # macOS
+    controller = HandMirrorController('/dev/ttyACM0', show_frame=True)  # Set show_frame=False for max speed
     controller.run()
