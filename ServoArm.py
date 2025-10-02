@@ -38,18 +38,21 @@ class HandMirrorController:
 
         # --- Camera setup ---
         self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)  # reduced resolution for speed
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
         # --- Control rate ---
         self.last_command_time = 0
-        self.command_interval = 0.2  # slower updates (200ms)
+        self.command_interval = 0.5  # slower updates for smoother movement
 
-        # --- Previous servo values ---
-        self.prev_claw = 90
-        self.prev_height = 0
+        # --- Previous servo values for smoothing ---
+        self.prev_claw = 45
+        self.prev_height = 45
         self.prev_extension = 45
-        self.prev_base = 90
+        self.prev_base = 90  # base frozen
+
+        # Smoothing factor (0 < alpha < 1). Lower = smoother/slower
+        self.smooth_alpha = 0.3
 
         print("🤚 Hand Mirror Controller Ready! Press 'q' to quit, 'r' to reset servos.")
 
@@ -79,14 +82,6 @@ class HandMirrorController:
         claw_angle = int(np.clip((avg_curl - 0.8) * 300, 0, 90))
         return claw_angle
 
-    def calculate_wrist_rotation(self, landmarks):
-        wrist, index_mcp, pinky_mcp = landmarks[0], landmarks[5], landmarks[17]
-        vec = np.array([index_mcp.x - pinky_mcp.x, index_mcp.y - pinky_mcp.y])
-        angle = math.atan2(vec[1], vec[0])
-        deg = math.degrees(angle)
-        base_angle = int(np.clip(90 + deg / 90 * 20, 70, 110))
-        return base_angle
-
     def calculate_forearm_pitch(self, pose_landmarks):
         shoulder = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
         elbow = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_ELBOW]
@@ -100,7 +95,7 @@ class HandMirrorController:
         mag_upper = np.linalg.norm(upper_arm_vec)
         angle_rad = math.acos(np.clip(dot / (mag_forearm * mag_upper + 1e-6), -1.0, 1.0))
         angle_deg = math.degrees(angle_rad)
-        servo_angle = int(np.clip(-angle_deg + 90, 0, 90))
+        servo_angle = int(np.clip(-angle_deg + 90, 15, 80))  # clamp 15-80
         return servo_angle
 
     def calculate_hand_extension(self, pose_landmarks, hand_landmarks):
@@ -115,38 +110,31 @@ class HandMirrorController:
         max_distance = 0.4
 
         extension_ratio = (distance - min_distance) / (max_distance - min_distance)
-        extension_angle = int(np.clip(extension_ratio * 90, 0, 90))
+        extension_angle = int(np.clip(extension_ratio * 90, 15, 80))  # clamp 15-80
         return extension_angle
 
     # --- Mirror to Arduino ---
     def mirror_hand_to_servos(self, pose_landmarks, hand_landmarks):
-        claw = self.calculate_fist_closure(hand_landmarks)
-        height = self.calculate_forearm_pitch(pose_landmarks)
-        extension = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
-        base_target = self.calculate_wrist_rotation(hand_landmarks)
+        claw_target = np.clip(self.calculate_fist_closure(hand_landmarks), 15, 80)
+        height_target = self.calculate_forearm_pitch(pose_landmarks)
+        extension_target = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
+        base_target = 90  # frozen
 
-        # Gradually move base to slow rotation
-        base_diff = base_target - self.prev_base
-        max_base_step = 2  # max degrees per update
-        if abs(base_diff) > max_base_step:
-            base = self.prev_base + np.sign(base_diff) * max_base_step
-        else:
-            base = base_target
+        # --- Exponential smoothing for smoother movement ---
+        claw = int(self.prev_claw + self.smooth_alpha * (claw_target - self.prev_claw))
+        height = int(self.prev_height + self.smooth_alpha * (height_target - self.prev_height))
+        extension = int(self.prev_extension + self.smooth_alpha * (extension_target - self.prev_extension))
+        base = base_target  # frozen
 
         now = time.time()
         if now - self.last_command_time >= self.command_interval:
-            if (abs(claw - self.prev_claw) > 2 or
-                abs(height - self.prev_height) > 2 or
-                abs(extension - self.prev_extension) > 2 or
-                abs(base - self.prev_base) > 0):
+            command = f"C{claw} H{height} E{extension} B{base}"
+            self.send_command(command)
+            print(f"Sent -> {command}")
 
-                # Send all in one line
-                command = f"C{claw} H{height} E{extension} B{base}"
-                self.send_command(command)
-                print(f"Sent -> {command}")
-
-                self.prev_claw, self.prev_height = claw, height
-                self.prev_extension, self.prev_base = extension, base
+            # Update previous values
+            self.prev_claw, self.prev_height = claw, height
+            self.prev_extension, self.prev_base = extension, base
             self.last_command_time = now
 
     # --- Main loop ---
@@ -176,7 +164,7 @@ class HandMirrorController:
                 if key == ord('q'):
                     break
                 elif key == ord('r'):
-                    self.send_command("C90 H0 E45 B90")
+                    self.send_command("C45 H45 E45 B90")
                     print("🔄 Resetting to default")
             else:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -193,6 +181,5 @@ class HandMirrorController:
 
 
 if __name__ == "__main__":
-    # Set show_frame=True to see the video, False for max speed
     controller = HandMirrorController('/dev/ttyACM0', show_frame=True)
     controller.run()
