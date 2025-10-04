@@ -128,7 +128,7 @@ class HandMirrorController:
         return extension_angle
 
     def mirror_hand_to_servos(self, pose_landmarks, hand_landmarks):
-        claw_target = np.clip(self.calculate_fist_closure(hand_landmarks), 15, 80)
+        claw_target = np.clip(self.calculate_fist_closure(hand_landmarks), 0, 90)  # Full range
         height_target = self.calculate_forearm_pitch(pose_landmarks)
         extension_target = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
         base_target = 90
