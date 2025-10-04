@@ -77,6 +77,12 @@ class HandMirrorController:
         self.frame_skip = 1
         self.frame_count = 0
 
+        # --- UI font settings: simpler, straighter, smaller ---
+        self.ui_font = cv2.FONT_HERSHEY_SIMPLEX
+        self.ui_scale = 0.45
+        self.ui_thickness = 1
+        self.ui_line = cv2.LINE_8
+
         print("🤚 Hand Mirror Controller Ready! Press 'q' to quit, 'r' to reset servos.")
 
     def send_command(self, command):
@@ -242,21 +248,21 @@ class HandMirrorController:
                     # Status indicator
                     status_color = (0, 255, 0) if pose_results.pose_landmarks and hands_results.multi_hand_landmarks else (0, 0, 255)
                     cv2.circle(frame, (15, 20), 8, status_color, -1)
-                    cv2.putText(frame, "TRACKING" if status_color == (0, 255, 0) else "NO DETECTION", 
-                              (30, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.putText(frame, "TRACKING" if status_color == (0, 255, 0) else "NO DETECTION",
+                                (30, 27), self.ui_font, self.ui_scale, (255, 255, 255), self.ui_thickness, lineType=self.ui_line)
                     
                     # Servo values with icons
-                    claw_status = "CLOSED" if self.prev_claw > 45 else "OPEN"
-                    cv2.putText(frame, f"CLAW:      {claw_status} ({self.prev_claw})", 
-                              (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 255), 2)
-                    cv2.putText(frame, f"HEIGHT:    {self.prev_height}", 
-                              (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 255), 2)
-                    cv2.putText(frame, f"EXTENSION: {self.prev_extension}", 
-                              (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 255), 2)
+                    claw_status = "OPEN" if self.prev_claw > 45 else "CLOSED"
+                    cv2.putText(frame, f"CLAW:      {claw_status} ({self.prev_claw})",
+                                (10, 60), self.ui_font, self.ui_scale, (100, 255, 255), self.ui_thickness, lineType=self.ui_line)
+                    cv2.putText(frame, f"HEIGHT:    {self.prev_height}",
+                                (10, 90), self.ui_font, self.ui_scale, (100, 255, 255), self.ui_thickness, lineType=self.ui_line)
+                    cv2.putText(frame, f"EXTENSION: {self.prev_extension}",
+                                (10, 120), self.ui_font, self.ui_scale, (100, 255, 255), self.ui_thickness, lineType=self.ui_line)
                     
-                    # Instructions at bottom
-                    cv2.putText(frame, "Press 'Q' to quit | 'R' to reset", 
-                              (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                    # Instructions at bottom (slightly smaller)
+                    cv2.putText(frame, "Press 'Q' to quit | 'R' to reset",
+                                (10, 230), self.ui_font, self.ui_scale * 0.85, (200, 200, 200), self.ui_thickness, lineType=self.ui_line)
 
             if self.show_frame:
                 cv2.imshow("Hand Control", frame)
