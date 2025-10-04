@@ -28,13 +28,19 @@ class HandMirrorController:
         )
 
         # --- Arduino setup ---
-        try:
-            self.arduino = serial.Serial(arduino_port, baud_rate, timeout=1)
-            time.sleep(2)
-            print(f"✅ Connected to Arduino on {arduino_port}")
-        except Exception as e:
-            print(f"❌ Could not connect to Arduino: {e}")
-            self.arduino = None
+        self.arduino = None
+        self.arduino_port = arduino_port
+        self.baud_rate = baud_rate
+        if arduino_port:
+            try:
+                self.arduino = serial.Serial(arduino_port, baud_rate, timeout=1)
+                time.sleep(2)
+                print(f"✅ Connected to Arduino on {arduino_port}")
+            except Exception as e:
+                print(f"❌ Could not connect to Arduino: {e}")
+                self.arduino = None
+        else:
+            print("⚠️ Skipping Arduino connection (dry-run)")
 
         # --- Camera setup ---
         self.cap = cv2.VideoCapture(0)
@@ -128,9 +134,13 @@ class HandMirrorController:
 
         now = time.time()
         if now - self.last_command_time >= self.command_interval:
-            command = f"C{claw} H{height} E{extension} B{base}"
-            self.send_command(command)
-            print(f"Sent -> {command}")
+            # compact command format without spaces to match Arduino parsing (e.g. C45H30E60B90)
+            command = f"C{claw}H{height}E{extension}B{base}"
+            sent = self.send_command(command)
+            if sent:
+                print(f"Sent -> {command}")
+            else:
+                print(f"Failed to send -> {command}")
 
             # Update previous values
             self.prev_claw, self.prev_height = claw, height
@@ -181,5 +191,15 @@ class HandMirrorController:
 
 
 if __name__ == "__main__":
-    controller = HandMirrorController('/dev/ttyACM0', show_frame=True)
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Hand mirror controller for ServoArm')
+    parser.add_argument('--port', type=str, default='/dev/cu.usbmodem101', help='Arduino serial port (e.g. /dev/cu.usbmodem101)')
+    parser.add_argument('--baud', type=int, default=9600, help='Serial baud rate')
+    parser.add_argument('--show-frame', action='store_true', help='Show camera frames with landmarks')
+    parser.add_argument('--dry-run', action='store_true', help='Do not try to connect to an Arduino (useful for testing)')
+
+    args = parser.parse_args()
+    port = None if args.dry_run else args.port
+    controller = HandMirrorController(port, baud_rate=args.baud, show_frame=args.show_frame)
     controller.run()
