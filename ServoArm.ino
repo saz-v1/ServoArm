@@ -15,7 +15,7 @@ void setup() {
   baseServo.attach(6);
 
   clawServo.write(90);        // open
-  secondArmServo.write(0);    // up
+  secondArmServo.write(0);    // up (REVERTED - back to normal)
   firstArmServo.write(45);    // middle
   baseServo.write(90);        // center
 }
@@ -42,7 +42,7 @@ void loop() {
       baseAngle = constrain(baseAngle, 70, 110);
 
       clawServo.write(clawAngle);
-      secondArmServo.write(heightAngle);
+      secondArmServo.write(heightAngle);  // REVERTED - back to normal
       firstArmServo.write(extensionAngle);
       baseServo.write(baseAngle);
     }
