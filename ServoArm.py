@@ -159,6 +159,9 @@ class HandMirrorController:
             pose_results = self.pose.process(rgb)
             hands_results = self.hands.process(rgb)
 
+            # Always show the camera frame when requested, even if no landmarks were detected.
+            if self.show_frame:
+                cv2.namedWindow("Hand Control", cv2.WINDOW_NORMAL)
             if pose_results.pose_landmarks and hands_results.multi_hand_landmarks:
                 pose_landmarks = pose_results.pose_landmarks.landmark
                 hand_landmarks = hands_results.multi_hand_landmarks[0].landmark
@@ -169,16 +172,14 @@ class HandMirrorController:
                     mp.solutions.drawing_utils.draw_landmarks(frame, pose_results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
                     cv2.imshow("Hand Control", frame)
 
-            if self.show_frame:
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord('r'):
-                    self.send_command("C45 H45 E45 B90")
-                    print("🔄 Resetting to default")
-            else:
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+            # Always poll for keypresses (so 'q' works regardless of detection state)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('r'):
+                # Use the compact command format to match Arduino parsing
+                self.send_command("C45H45E45B90")
+                print("🔄 Resetting to default")
 
         self.cleanup()
 
