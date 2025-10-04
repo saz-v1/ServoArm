@@ -16,7 +16,7 @@ class HandMirrorController:
             max_num_hands=1,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
-            model_complexity=0  # Lighter model
+            model_complexity=0
         )
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -24,7 +24,7 @@ class HandMirrorController:
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=False,
-            model_complexity=0,  # Lighter model
+            model_complexity=0,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5
         )
@@ -51,21 +51,27 @@ class HandMirrorController:
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-        # --- Control rate (MUCH faster for snappy response) ---
+        # --- Control rate ---
         self.last_command_time = 0
-        self.command_interval = 0.05  # 20Hz - faster updates
+        self.command_interval = 0.05
 
-        # --- Previous servo values for minimal smoothing ---
+        # --- Previous servo values ---
         self.prev_claw = 45
         self.prev_height = 45
         self.prev_extension = 45
         self.prev_base = 90
 
-        # Less smoothing = more snappy (closer to 1.0 = more responsive)
-        self.smooth_alpha = 0.8  # Much more responsive than before
+        # --- Smoothing (keep original responsive value) ---
+        self.smooth_alpha = 0.8
+
+        # --- DEADZONES (only ignore tiny jitter) ---
+        self.deadzone_claw = 3      # Small deadzone to prevent jitter
+        self.deadzone_height = 2    
+        self.deadzone_extension = 2
+        self.deadzone_base = 5
 
         # --- Frame processing ---
-        self.frame_skip = 1  # Process every frame for responsiveness
+        self.frame_skip = 1
         self.frame_count = 0
 
         print("🤚 Hand Mirror Controller Ready! Press 'q' to quit, 'r' to reset servos.")
@@ -80,10 +86,17 @@ class HandMirrorController:
                 print(f"Arduino error: {e}")
         return False
 
+    def apply_deadzone(self, new_value, old_value, deadzone):
+        """Only update if change is larger than deadzone"""
+        if abs(new_value - old_value) < deadzone:
+            return old_value
+        return new_value
+
     def calculate_distance(self, p1, p2):
         return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
 
     def calculate_fist_closure(self, landmarks):
+        """ORIGINAL WORKING METHOD - don't change!"""
         fingertips = [4, 8, 12, 16, 20]
         joints = [3, 6, 10, 14, 18]
         curl_scores = []
@@ -97,6 +110,7 @@ class HandMirrorController:
         return claw_angle
 
     def calculate_forearm_pitch(self, pose_landmarks):
+        """ORIGINAL WORKING METHOD - clamped to 0-90°"""
         shoulder = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
         elbow = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_ELBOW]
         wrist = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_WRIST]
@@ -109,10 +123,11 @@ class HandMirrorController:
         mag_upper = np.linalg.norm(upper_arm_vec)
         angle_rad = math.acos(np.clip(dot / (mag_forearm * mag_upper + 1e-6), -1.0, 1.0))
         angle_deg = math.degrees(angle_rad)
-        servo_angle = int(np.clip(-angle_deg + 90, 15, 80))
+        servo_angle = int(np.clip(-angle_deg + 90, 0, 90))  # Cap at 90
         return servo_angle
 
     def calculate_hand_extension(self, pose_landmarks, hand_landmarks):
+        """ORIGINAL WORKING METHOD - clamped to 0-90°"""
         shoulder = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
         wrist = pose_landmarks[self.mp_pose.PoseLandmark.LEFT_WRIST]
 
@@ -124,16 +139,22 @@ class HandMirrorController:
         max_distance = 0.4
 
         extension_ratio = (distance - min_distance) / (max_distance - min_distance)
-        extension_angle = int(np.clip(extension_ratio * 90, 15, 80))
+        extension_angle = int(np.clip(extension_ratio * 90, 0, 90))  # Cap at 90
         return extension_angle
 
     def mirror_hand_to_servos(self, pose_landmarks, hand_landmarks):
-        claw_target = np.clip(self.calculate_fist_closure(hand_landmarks), 0, 90)  # Full range
-        height_target = self.calculate_forearm_pitch(pose_landmarks)
-        extension_target = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
+        # Calculate raw target angles (ORIGINAL formulas)
+        claw_raw = self.calculate_fist_closure(hand_landmarks)
+        height_raw = self.calculate_forearm_pitch(pose_landmarks)
+        extension_raw = self.calculate_hand_extension(pose_landmarks, hand_landmarks)
         base_target = 90
 
-        # Light smoothing for snappy response
+        # Apply deadzones to RAW values (before smoothing)
+        claw_target = self.apply_deadzone(claw_raw, self.prev_claw, self.deadzone_claw)
+        height_target = self.apply_deadzone(height_raw, self.prev_height, self.deadzone_height)
+        extension_target = self.apply_deadzone(extension_raw, self.prev_extension, self.deadzone_extension)
+
+        # Apply smoothing
         claw = int(self.prev_claw + self.smooth_alpha * (claw_target - self.prev_claw))
         height = int(self.prev_height + self.smooth_alpha * (height_target - self.prev_height))
         extension = int(self.prev_extension + self.smooth_alpha * (extension_target - self.prev_extension))
@@ -144,7 +165,7 @@ class HandMirrorController:
             command = f"C{claw}H{height}E{extension}B{base}"
             sent = self.send_command(command)
             if sent:
-                print(f"Sent -> {command} | FPS: {1/(now-self.last_command_time):.1f}", end='\r')
+                print(f"Sent -> {command}", end='\r')
 
             self.prev_claw, self.prev_height = claw, height
             self.prev_extension, self.prev_base = extension, base
@@ -162,7 +183,6 @@ class HandMirrorController:
             self.frame_count += 1
             frame = cv2.flip(frame, 1)
             
-            # Process every frame (or every Nth if you set frame_skip > 1)
             if self.frame_count % self.frame_skip == 0:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -175,7 +195,6 @@ class HandMirrorController:
                     self.mirror_hand_to_servos(pose_landmarks, hand_landmarks)
 
                     if self.show_frame:
-                        # Draw landmarks
                         self.mp_draw.draw_landmarks(
                             frame, 
                             hands_results.multi_hand_landmarks[0], 
@@ -187,17 +206,14 @@ class HandMirrorController:
                             self.mp_pose.POSE_CONNECTIONS
                         )
                 
-                # Add text overlay (always if showing frame)
                 if self.show_frame:
                     cv2.putText(frame, f"Claw: {self.prev_claw} Height: {self.prev_height} Ext: {self.prev_extension}", 
                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-            # CRITICAL: Always show frame AND waitKey if requested
             if self.show_frame:
                 cv2.imshow("Hand Control", frame)
                 key = cv2.waitKey(1) & 0xFF
             else:
-                # Still need waitKey for OpenCV to process events, but shorter delay
                 key = cv2.waitKey(1) & 0xFF
             
             if key == ord('q'):
@@ -221,14 +237,21 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Hand mirror controller for ServoArm')
     parser.add_argument('--port', type=str, default='/dev/cu.usbmodem101', 
-                       help='Arduino serial port (e.g. /dev/cu.usbmodem101)')
+                       help='Arduino serial port')
     parser.add_argument('--baud', type=int, default=9600, help='Serial baud rate')
     parser.add_argument('--show-frame', action='store_true', help='Show camera frames with landmarks')
     parser.add_argument('--dry-run', action='store_true', help='Do not try to connect to an Arduino')
-    parser.add_argument('--frame-skip', type=int, default=1, help='Process every Nth frame (default: 1)')
+    parser.add_argument('--deadzone-claw', type=int, default=3, help='Claw deadzone in degrees')
+    parser.add_argument('--deadzone-height', type=int, default=2, help='Height deadzone in degrees')
+    parser.add_argument('--deadzone-ext', type=int, default=2, help='Extension deadzone in degrees')
 
     args = parser.parse_args()
     port = None if args.dry_run else args.port
     controller = HandMirrorController(port, baud_rate=args.baud, show_frame=args.show_frame)
-    controller.frame_skip = args.frame_skip
+    
+    # Allow command-line tuning of deadzones
+    controller.deadzone_claw = args.deadzone_claw
+    controller.deadzone_height = args.deadzone_height
+    controller.deadzone_extension = args.deadzone_ext
+    
     controller.run()
