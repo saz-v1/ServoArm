@@ -4,8 +4,9 @@ import serial
 import time
 import numpy as np
 import math
-# FOR LINUX /dev/ttyACM0
-# FOR MAC /dev/cu.usbmodem101
+
+# FOR lINUX USE '/dev/ttyACM0'
+# FOR MAC USE '/dev/cu.usbmodem101'
 
 class HandMirrorController:
     def __init__(self, arduino_port='/dev/ttyACM0', baud_rate=9600, show_frame=False):
@@ -181,11 +182,17 @@ class HandMirrorController:
     def run(self):
         print("🎥 Starting camera loop...")
         
+        # Force window creation if showing frame
+        if self.show_frame:
+            cv2.namedWindow("Hand Control", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Hand Control", 800, 600)
+        
         while True:
             ret, frame = self.cap.read()
             if not ret:
                 print("❌ Failed to read frame")
-                break
+                time.sleep(0.1)
+                continue  # Try again instead of breaking
             
             self.frame_count += 1
             frame = cv2.flip(frame, 1)
@@ -202,20 +209,54 @@ class HandMirrorController:
                     self.mirror_hand_to_servos(pose_landmarks, hand_landmarks)
 
                     if self.show_frame:
+                        # Draw landmarks with better styling
                         self.mp_draw.draw_landmarks(
                             frame, 
                             hands_results.multi_hand_landmarks[0], 
-                            self.mp_hands.HAND_CONNECTIONS
+                            self.mp_hands.HAND_CONNECTIONS,
+                            landmark_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                                color=(0, 255, 0), thickness=2, circle_radius=3
+                            ),
+                            connection_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                                color=(0, 200, 0), thickness=2
+                            )
                         )
                         mp.solutions.drawing_utils.draw_landmarks(
                             frame, 
                             pose_results.pose_landmarks, 
-                            self.mp_pose.POSE_CONNECTIONS
+                            self.mp_pose.POSE_CONNECTIONS,
+                            landmark_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                                color=(255, 100, 0), thickness=2, circle_radius=2
+                            ),
+                            connection_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                                color=(255, 150, 0), thickness=2
+                            )
                         )
                 
                 if self.show_frame:
-                    cv2.putText(frame, f"Claw: {self.prev_claw} Height: {self.prev_height} Ext: {self.prev_extension}", 
-                              (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    # Create a dark overlay for better text readability
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (0, 0), (320, 140), (0, 0, 0), -1)
+                    frame = cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
+                    
+                    # Status indicator
+                    status_color = (0, 255, 0) if pose_results.pose_landmarks and hands_results.multi_hand_landmarks else (0, 0, 255)
+                    cv2.circle(frame, (15, 20), 8, status_color, -1)
+                    cv2.putText(frame, "TRACKING" if status_color == (0, 255, 0) else "NO DETECTION", 
+                              (30, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    
+                    # Servo values with icons
+                    claw_status = "CLOSED" if self.prev_claw > 45 else "OPEN"
+                    cv2.putText(frame, f"CLAW:      {claw_status} ({self.prev_claw})", 
+                              (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 255), 2)
+                    cv2.putText(frame, f"HEIGHT:    {self.prev_height}", 
+                              (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 255), 2)
+                    cv2.putText(frame, f"EXTENSION: {self.prev_extension}", 
+                              (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 255), 2)
+                    
+                    # Instructions at bottom
+                    cv2.putText(frame, "Press 'Q' to quit | 'R' to reset", 
+                              (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
             if self.show_frame:
                 cv2.imshow("Hand Control", frame)
