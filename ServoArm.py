@@ -96,7 +96,7 @@ class HandMirrorController:
         return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
 
     def calculate_fist_closure(self, landmarks):
-        """ORIGINAL WORKING METHOD - don't change!"""
+        """ORIGINAL WORKING METHOD - but snaps to 0 or 90"""
         fingertips = [4, 8, 12, 16, 20]
         joints = [3, 6, 10, 14, 18]
         curl_scores = []
@@ -106,8 +106,13 @@ class HandMirrorController:
             wrist_to_joint = self.calculate_distance(wrist_pos, joint_pos)
             curl_scores.append(wrist_to_tip / (wrist_to_joint + 1e-6))
         avg_curl = sum(curl_scores) / len(curl_scores)
-        claw_angle = int(np.clip((avg_curl - 0.8) * 300, 0, 90))
-        return claw_angle
+        raw_angle = int(np.clip((avg_curl - 0.8) * 300, 0, 90))
+        
+        # Snap to closest: 0 (open) or 90 (closed)
+        if raw_angle < 45:
+            return 0
+        else:
+            return 90
 
     def calculate_forearm_pitch(self, pose_landmarks):
         """ORIGINAL WORKING METHOD - clamped to 0-90°"""
