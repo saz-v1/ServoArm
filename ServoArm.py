@@ -4,9 +4,11 @@ import serial
 import time
 import numpy as np
 import math
+# FOR LINUX /dev/ttyACM0
+# FOR MAC /dev/cu.usbmodem101
 
 class HandMirrorController:
-    def __init__(self, arduino_port='/dev/cu.usbmodem101', baud_rate=9600, show_frame=False):
+    def __init__(self, arduino_port='/dev/ttyACM0', baud_rate=9600, show_frame=False):
         self.show_frame = show_frame
 
         # --- MediaPipe Hands ---
@@ -241,7 +243,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Hand mirror controller for ServoArm')
-    parser.add_argument('--port', type=str, default='/dev/cu.usbmodem101', 
+    parser.add_argument('--port', type=str, default='/dev/ttyACM0', 
                        help='Arduino serial port')
     parser.add_argument('--baud', type=int, default=9600, help='Serial baud rate')
     parser.add_argument('--show-frame', action='store_true', help='Show camera frames with landmarks')
