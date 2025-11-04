@@ -8,6 +8,17 @@ Quick overview
 - Minimal smoothing + deadzones to reduce jitter.
 - Camera UI can display landmarks and a small status overlay.
 
+## Project Gallery
+
+![Working Arm Demo](WorkingArm.gif)
+*ServoArm in action — real-time hand and arm tracking mirrored to the robotic arm*
+
+![ServoArm Wiring](ServoArmWiring.jpg)
+*Wiring setup showing the Arduino UNO and servo connections*
+
+![Failed Print](Failed Print.jpg)
+*One of the many failed 3D prints during the development process — a reminder that progress often comes with trial and error*
+
 Requirements
 - Linux or macOS
 - Python 3.8+
@@ -46,7 +57,8 @@ Arduino / Serial notes
   then log out/in.
 
 Power & wiring
-- Small servos may draw more current than the Arduino 5V regulator can supply. Use an external 5V supply if servos stutter or don’t move. Always connect grounds between Arduino and the servo power supply.
+- Small servos may draw more current than the Arduino 5V regulator can supply. Use an external 5V supply if servos stutter or don't move. Always connect grounds between Arduino and the servo power supply.
+- See `ServoArmWiring.jpg` for the wiring setup reference.
 
 Troubleshooting
 - No serial response: verify the port and baud rate, ensure Arduino sketch is uploaded, close Serial Monitor.
